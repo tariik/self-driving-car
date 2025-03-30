@@ -1,0 +1,93 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+
+.env/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+profile_default/
+ipython_config.py
+
+# Deep learning frameworks
+# PyTorch
+*.pth
+*.pt
+.pytorch/
+# TensorFlow
+*.ckpt
+*.pb
+checkpoint
+model.ckpt.*
+events.out.tfevents.*
+.tf_history/
+
+# CARLA specific
+CarlaUE4/
+*.egg
+*_out/
+_out/
+.vs/
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+.ue4/
+
+
+
+# Logs
+logs/
+*.log
+wandb/
+runs/
+tb_logs/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+.env
+.venv
+*.sublime-project
+*.sublime-workspace
+
+# OS specific
+Thumbs.db
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# Project specific
+
+*.mp4
+records/
+screenshots/
+results/
