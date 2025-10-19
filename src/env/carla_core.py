@@ -163,37 +163,67 @@ class CarlaCore:
         weather = getattr(carla.WeatherParameters, experiment_config["weather"])
         self.world.set_weather(weather)
 
-        self.tm_port = self.server_port // 10 + self.server_port % 10
-        while is_used(self.tm_port):
-            print("Traffic manager's port " + str(self.tm_port) + " is already being used. Checking the next one")
-            self.tm_port += 1
-        print("Traffic manager connected to port " + str(self.tm_port))
-
-        try:
-            self.traffic_manager = self.client.get_trafficmanager(self.tm_port)
-            self.traffic_manager.set_hybrid_physics_mode(experiment_config["background_activity"]["tm_hybrid_mode"])
-            seed = experiment_config["background_activity"]["seed"]
-            if seed is not None:
-                self.traffic_manager.set_random_device_seed(seed)
-        except RuntimeError as e:
-            print(f"Warning: Could not create traffic manager on port {self.tm_port}: {e}")
-            print("Attempting to use default traffic manager port 8000...")
+        # Clear all vehicles only if flag enabled (clean road)
+        if experiment_config.get("clean_road", False):
             try:
-                self.traffic_manager = self.client.get_trafficmanager(8000)
+                vehicles = list(self.world.get_actors().filter('vehicle.*'))
+                removed = 0
+                for v in vehicles:
+                    # Remove every vehicle (hero will be respawned later)
+                    try:
+                        v.destroy()
+                        removed += 1
+                    except Exception:
+                        pass
+                if removed:
+                    self.world.tick()
+                    print(f"Removed {removed} vehicles from world (clean road)")
+            except Exception as e:
+                print(f"Warning while clearing vehicles: {e}")
+
+        # Background NPCs / Traffic Manager configuration
+        n_vehicles = experiment_config["background_activity"]["n_vehicles"]
+        n_walkers = experiment_config["background_activity"]["n_walkers"]
+        always_init_tm = experiment_config.get("always_init_traffic_manager", False)
+        want_tm = always_init_tm or (n_vehicles > 0 or n_walkers > 0)
+
+        if not want_tm:
+            # Do not initialize Traffic Manager and do not spawn background actors
+            self.traffic_manager = None
+            print("Traffic Manager disabled (no NPCs and not forced); skipping background spawning")
+        else:
+            # Initialize Traffic Manager
+            self.tm_port = self.server_port // 10 + self.server_port % 10
+            while is_used(self.tm_port):
+                print("Traffic manager's port " + str(self.tm_port) + " is already being used. Checking the next one")
+                self.tm_port += 1
+            print("Traffic manager connected to port " + str(self.tm_port))
+
+            try:
+                self.traffic_manager = self.client.get_trafficmanager(self.tm_port)
                 self.traffic_manager.set_hybrid_physics_mode(experiment_config["background_activity"]["tm_hybrid_mode"])
                 seed = experiment_config["background_activity"]["seed"]
                 if seed is not None:
                     self.traffic_manager.set_random_device_seed(seed)
-            except Exception as e2:
-                print(f"Warning: Could not connect to traffic manager: {e2}")
-                print("Continuing without traffic manager. Background traffic will not be available.")
-                self.traffic_manager = None
+            except RuntimeError as e:
+                print(f"Warning: Could not create traffic manager on port {self.tm_port}: {e}")
+                print("Attempting to use default traffic manager port 8000...")
+                try:
+                    self.traffic_manager = self.client.get_trafficmanager(8000)
+                    self.traffic_manager.set_hybrid_physics_mode(experiment_config["background_activity"]["tm_hybrid_mode"])
+                    seed = experiment_config["background_activity"]["seed"]
+                    if seed is not None:
+                        self.traffic_manager.set_random_device_seed(seed)
+                except Exception as e2:
+                    print(f"Warning: Could not connect to traffic manager: {e2}")
+                    print("Continuing without traffic manager. Background traffic will not be available.")
+                    self.traffic_manager = None
 
-        # Spawn the background activity
-        self.spawn_npcs(
-            experiment_config["background_activity"]["n_vehicles"],
-            experiment_config["background_activity"]["n_walkers"],
-        )
+            # Spawn the background activity only if requested
+            if n_vehicles > 0 or n_walkers > 0:
+                self.spawn_npcs(n_vehicles, n_walkers)
+            else:
+                print("TM initialized (forced), but no NPCs requested; not spawning any background actors")
 
 
     def reset_hero(self, hero_config):

@@ -105,6 +105,7 @@ echo ""
 
 # Lanzar el entrenamiento con DISPLAY para que pygame funcione
 cd "$SCRIPT_DIR"
+
 DISPLAY=:51.0 python src/main.py
 
 echo ""

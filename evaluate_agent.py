@@ -61,7 +61,7 @@ def calculate_rmse(trajectory, reference_waypoints):
     return rmse, max_error
 
 
-def evaluate_agent(checkpoint_path, num_iterations=20, save_video=True, show_display=True):
+def evaluate_agent(checkpoint_path, num_iterations=5, save_video=True, show_display=True):
     """
     Evalúa un agente entrenado en una ruta específica.
     

@@ -53,6 +53,14 @@ class DisplayManager:
         self.last_reward = 0.0
         self.fps = 0
         
+        # Driving features (from paper)
+        self.velocity = 0.0  # vt (m/s)
+        self.distance = 0.0  # dt (m)
+        self.angle = 0.0     # φt (rad)
+        self.action_throttle = 0.0
+        self.action_steer = 0.0
+        self.action_brake = 0.0
+        
         # Setup camera sensor
         self._setup_camera()
         
@@ -131,48 +139,150 @@ class DisplayManager:
                     return True
         return False
     
-    def render_hud(self, step, reward, total_reward, done=False):
-        """Render HUD with training information"""
+    def render_hud(self, step, reward, total_reward, done=False, epsilon=0.0):
+        """Render HUD with training information
+        
+        Args:
+            step: Current step number
+            reward: Last reward received
+            total_reward: Accumulated reward
+            done: Whether episode is terminated
+            epsilon: Current exploration rate (for DQN epsilon-greedy)
+        """
         self.step_count = step
         self.last_reward = reward
         self.total_reward = total_reward
         
-        # Semi-transparent background
-        hud_surface = pygame.Surface((280, 200))
-        hud_surface.set_alpha(200)
-        hud_surface.fill((0, 0, 0))
-        self.display.blit(hud_surface, (10, 10))
+        # Semi-transparent background (ventana profesional pequeña)
+        hud_width = 220
+        hud_height = 240
+        hud_x = self.width - hud_width - 15  # Esquina superior derecha
+        hud_y = 15
         
-        # Training info
-        y_offset = 20
+        hud_surface = pygame.Surface((hud_width, hud_height))
+        hud_surface.set_alpha(200)  # Semi-transparente profesional
+        hud_surface.fill((20, 20, 30))  # Fondo azul oscuro profesional
+        self.display.blit(hud_surface, (hud_x, hud_y))
         
-        # Title
-        title = self.font.render("CARLA DRL Training", True, (255, 255, 0))
-        self.display.blit(title, (20, y_offset))
-        y_offset += 30
+        # Borde decorativo
+        pygame.draw.rect(self.display, (100, 150, 255), 
+                        (hud_x, hud_y, hud_width, hud_height), 2)
         
-        # Stats
-        texts = [
-            f"Step: {step}",
-            f"FPS: {self.fps:.1f}",
-            f"Reward: {reward:.4f}",
-            f"Total: {total_reward:.2f}",
+        # Training info - Formato profesional con descripciones
+        y_offset = hud_y + 12
+        x_offset = hud_x + 10
+        line_height = 16
+        
+        # Title profesional
+        title = self.font.render("AGENT STATUS", True, (100, 200, 255))
+        self.display.blit(title, (x_offset, y_offset))
+        y_offset += 25
+        
+        # Línea separadora
+        pygame.draw.line(self.display, (100, 150, 255), 
+                        (x_offset, y_offset), (hud_x + hud_width - 10, y_offset), 1)
+        y_offset += 8
+        
+        # === VEHICLE STATE ===
+        section_title = self.small_font.render("Vehicle State", True, (150, 200, 255))
+        self.display.blit(section_title, (x_offset, y_offset))
+        y_offset += line_height + 2
+        
+        # Estado con descripciones profesionales
+        state_data = [
+            ("Velocity:", f"{self.velocity:5.1f} m/s", (100, 255, 200)),
+            ("Distance:", f"{self.distance:5.2f} m", (100, 255, 200)),
+            ("Angle:", f"{np.degrees(self.angle):+5.1f}°", (100, 255, 200)),
         ]
         
-        for text in texts:
-            color = (0, 255, 0)
-            surface = self.small_font.render(text, True, color)
-            self.display.blit(surface, (20, y_offset))
-            y_offset += 25
+        for label, value, color in state_data:
+            # Label
+            label_surface = self.small_font.render(label, True, (180, 180, 180))
+            self.display.blit(label_surface, (x_offset, y_offset))
+            # Value
+            value_surface = self.small_font.render(value, True, color)
+            self.display.blit(value_surface, (x_offset + 70, y_offset))
+            y_offset += line_height
         
-        # Status
-        status_text = 'DONE' if done else 'Running'
-        status_color = (255, 255, 0) if done else (0, 255, 0)
-        surface = self.small_font.render(f"Status: {status_text}", True, status_color)
-        self.display.blit(surface, (20, y_offset))
+        y_offset += 5
+        
+        # === CONTROL ACTION ===
+        section_title = self.small_font.render("Control Action", True, (255, 180, 150))
+        self.display.blit(section_title, (x_offset, y_offset))
+        y_offset += line_height + 2
+        
+        # Acciones con descripciones profesionales
+        action_data = [
+            ("Throttle:", f"{self.action_throttle:4.2f}", (255, 200, 150)),
+            ("Steering:", f"{self.action_steer:+5.2f}", (255, 200, 150)),
+            ("Brake:", f"{self.action_brake:4.2f}", (255, 200, 150)),
+        ]
+        
+        for label, value, color in action_data:
+            # Label
+            label_surface = self.small_font.render(label, True, (180, 180, 180))
+            self.display.blit(label_surface, (x_offset, y_offset))
+            # Value
+            value_surface = self.small_font.render(value, True, color)
+            self.display.blit(value_surface, (x_offset + 70, y_offset))
+            y_offset += line_height
+        
+        y_offset += 5
+        
+        # === TRAINING METRICS ===
+        section_title = self.small_font.render("Training", True, (150, 255, 150))
+        self.display.blit(section_title, (x_offset, y_offset))
+        y_offset += line_height + 2
+        
+        # Métricas con descripciones profesionales
+        training_data = [
+            ("Step:", f"{step}", (150, 255, 150)),
+            ("Reward:", f"{reward:+6.3f}", (150, 255, 150)),
+            ("Epsilon:", f"{epsilon:.4f}", (255, 255, 100)),  # Exploración DQN
+        ]
+        
+        for label, value, color in training_data:
+            # Label
+            label_surface = self.small_font.render(label, True, (180, 180, 180))
+            self.display.blit(label_surface, (x_offset, y_offset))
+            # Value
+            value_surface = self.small_font.render(value, True, color)
+            self.display.blit(value_surface, (x_offset + 70, y_offset))
+            y_offset += line_height
+        
+        # Status badge profesional en la parte inferior
+        y_offset += 3
+        status_text = '● TERMINATED' if done else '● RUNNING'
+        status_color = (255, 100, 100) if done else (100, 255, 100)
+        status_surface = self.small_font.render(status_text, True, status_color)
+        self.display.blit(status_surface, (x_offset, y_offset))
     
-    def update(self, step=0, reward=0.0, total_reward=0.0, done=False):
-        """Update display with new data"""
+    def update(self, step=0, reward=0.0, total_reward=0.0, done=False, 
+               velocity=0.0, distance=0.0, angle=0.0,
+               throttle=0.0, steer=0.0, brake=0.0, epsilon=0.0):
+        """Update display with new data
+        
+        Args:
+            step: Current step number
+            reward: Current step reward
+            total_reward: Cumulative reward
+            done: Episode done flag
+            velocity: Vehicle velocity vt (m/s)
+            distance: Distance to lane center dt (m)
+            angle: Angle with respect to lane φt (rad)
+            throttle: Throttle action
+            steer: Steering action
+            brake: Brake action
+            epsilon: Exploration rate (DQN epsilon-greedy)
+        """
+        # Update state variables
+        self.velocity = velocity
+        self.distance = distance
+        self.angle = angle
+        self.action_throttle = throttle
+        self.action_steer = steer
+        self.action_brake = brake
+        
         # If following spectator, sync camera to spectator transform each frame
         if self.follow_spectator and self.camera_sensor is not None:
             try:
@@ -189,7 +299,7 @@ class DisplayManager:
             self.display.blit(self.camera_surface, (0, 0))
         
         # Render HUD
-        self.render_hud(step, reward, total_reward, done)
+        self.render_hud(step, reward, total_reward, done, epsilon)
         
         # Update display
         pygame.display.flip()

@@ -38,6 +38,22 @@ class CarlaEnv(gym.Env):
         # Spectator camera mode: 'chase' (follow behind hero) or 'route_overview'
         self.spectator_mode = 'chase'
         
+        # Elegant route visualization style (ONLY for spectator)
+        # Softer colors and thinner lines, drawn high above ground so hero camera won't see them
+        self._route_viz = {
+            'z_offset': 20.0,                 # meters above ground to stay out of hero view
+            'lifetime': 60.0,                 # seconds (fits typical episode of ~50s)
+            'route_color_start': carla.Color(110, 210, 170),  # soft mint →
+            'route_color_end':   carla.Color(70, 150, 220),   #   to soft teal/blue
+            'start_color':       carla.Color(90, 160, 255),   # soft blue
+            'goal_color':        carla.Color(255, 120, 120),  # soft red
+            'current_color':     carla.Color(255, 215, 0),    # gold (subtle highlight)
+            'wp_point_size':     0.05,        # small points
+            'current_point_size':0.10,
+            'line_thickness':    0.05,        # thin lines
+            'label_every':       0,           # 0 disables labels to keep it clean
+        }
+        
         # Initialize additional sensors (Phase 1.3)
         self.collision_sensor = None
         self.lane_invasion_sensor = None
@@ -52,11 +68,15 @@ class CarlaEnv(gym.Env):
         # Reset spectator positioning flag
         self._spectator_positioned = False
         
+        # Clear previous route visualization (wait for previous drawings to expire)
+        # Note: CARLA debug drawings persist for their lifetime, we rely on short lifetimes
+        
         # Setup additional sensors (Phase 1.3)
         self._setup_additional_sensors()
         
         # Setup random route (Phase 1.4)
         if self.experiment.use_random_routes:
+            print("\n🗺️  Generando nueva ruta para el episodio...")
             self._setup_random_route()
 
         # Tick once and get the observations
@@ -97,9 +117,9 @@ class CarlaEnv(gym.Env):
         # Update spectator to follow hero
         self.update_spectator()
         
-        # Update route visualization (si hay ruta activa)
-        if self.experiment.use_random_routes:
-            self._update_route_visualization()
+        # DESACTIVADO: No actualizar visualización en cada step (causa demasiados dibujos)
+        # if self.experiment.use_random_routes:
+        #     self._update_route_visualization()
         
         return observation, reward, done, {} , info
     
@@ -404,6 +424,8 @@ class CarlaEnv(gym.Env):
             world_map = self.core.world.get_map()
             spawn_points = world_map.get_spawn_points()
             
+            print(f"   📍 Spawn points disponibles: {len(spawn_points)}")
+            
             if len(spawn_points) < 2:
                 print("   ⚠️  No hay suficientes spawn points para ruta aleatoria")
                 return
@@ -412,19 +434,28 @@ class CarlaEnv(gym.Env):
             start_idx = np.random.randint(0, len(spawn_points))
             end_idx = np.random.randint(0, len(spawn_points))
             
-            # Asegurar que start y end sean diferentes
-            max_attempts = 10
+            # Asegurar que start y end sean diferentes y no estén muy cerca
+            max_attempts = 20
             attempts = 0
-            while end_idx == start_idx and attempts < max_attempts:
+            min_distance = 50.0  # Al menos 50 metros de distancia
+            
+            while attempts < max_attempts:
+                if end_idx != start_idx:
+                    distance = spawn_points[start_idx].location.distance(spawn_points[end_idx].location)
+                    if distance >= min_distance:
+                        break
                 end_idx = np.random.randint(0, len(spawn_points))
                 attempts += 1
             
-            if end_idx == start_idx:
-                print("   ⚠️  No se pudo encontrar destino diferente")
+            if end_idx == start_idx or spawn_points[start_idx].location.distance(spawn_points[end_idx].location) < min_distance:
+                print(f"   ⚠️  No se pudo encontrar destino válido después de {max_attempts} intentos")
                 return
             
             start_transform = spawn_points[start_idx]
             end_transform = spawn_points[end_idx]
+            
+            print(f"   🚀 START spawn #{start_idx}: ({start_transform.location.x:.1f}, {start_transform.location.y:.1f})")
+            print(f"   🎯 GOAL spawn #{end_idx}: ({end_transform.location.x:.1f}, {end_transform.location.y:.1f})")
             
             # Generar ruta con GlobalRoutePlanner
             route_waypoints = self._get_route(
@@ -433,8 +464,8 @@ class CarlaEnv(gym.Env):
                 world_map
             )
             
-            if not route_waypoints:
-                print("   ⚠️  No se pudo generar ruta")
+            if not route_waypoints or len(route_waypoints) < 2:
+                print("   ⚠️  No se pudo generar ruta válida")
                 return
             
             # Guardar ruta en experiment
@@ -451,7 +482,7 @@ class CarlaEnv(gym.Env):
                 for wp1, wp2 in zip(route_waypoints[:-1], route_waypoints[1:])
             )
             
-            print(f"   🗺️  Ruta generada: {len(route_waypoints)} waypoints, {route_distance:.1f}m")
+            print(f"   ✅ Ruta lista: {len(route_waypoints)} waypoints, {route_distance:.1f}m")
             
             # Visualizar ruta (solo en spectator, no en cámara del agente)
             self._visualize_route(route_waypoints, start_transform, end_transform)
@@ -484,8 +515,25 @@ class CarlaEnv(gym.Env):
             # Trazar ruta
             route = planner.trace_route(start_location, end_location)
             
+            if not route:
+                print("   ⚠️  GlobalRoutePlanner no devolvió ninguna ruta")
+                return []
+            
             # Extraer solo los waypoints (route contiene tuplas de (waypoint, RoadOption))
             waypoints = [waypoint for waypoint, _ in route]
+            
+            # Validar que tenemos waypoints
+            if not waypoints:
+                print("   ⚠️  No se extrajeron waypoints de la ruta")
+                return []
+            
+            # Calcular distancia total
+            total_distance = sum(
+                waypoints[i].transform.location.distance(waypoints[i+1].transform.location)
+                for i in range(len(waypoints) - 1)
+            )
+            
+            print(f"   ✅ Planner generó {len(waypoints)} waypoints, distancia: {total_distance:.1f}m")
             
             return waypoints
             
@@ -494,11 +542,13 @@ class CarlaEnv(gym.Env):
             return []
         except Exception as e:
             print(f"   ⚠️  Error en _get_route: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def _visualize_route(self, waypoints, start_transform, end_transform):
         """
-        Visualiza la ruta en el mundo 3D de CARLA
+        Visualiza SOLO los waypoints de la ruta del episodio actual
         Los waypoints se dibujan SOLO en el spectator, NO aparecen en la cámara del agente
         
         Args:
@@ -507,88 +557,106 @@ class CarlaEnv(gym.Env):
             end_transform: Transform del punto final
         """
         try:
+            if not waypoints:
+                print("   ⚠️  No hay waypoints para visualizar")
+                return
+            
             debug = self.core.world.debug
+            z = 5.0  # Altura fija: 5 metros arriba
+            lifetime = 60.0  # 60 segundos (duración corta para que expire rápido entre episodios)
             
-            # Configuración de colores
-            GREEN = carla.Color(0, 255, 0)      # Verde para waypoints normales
-            BLUE = carla.Color(0, 100, 255)     # Azul para inicio
-            RED = carla.Color(255, 0, 0)        # Rojo para destino
-            YELLOW = carla.Color(255, 255, 0)   # Amarillo para waypoint actual
+            # Colores bien definidos y visibles
+            GREEN = carla.Color(0, 255, 0)       # Verde brillante para la ruta
+            BLUE = carla.Color(0, 100, 255)      # Azul para START
+            RED = carla.Color(255, 0, 0)         # Rojo para GOAL
             
-            # Lifetime: cuánto tiempo permanecen visibles (segundos)
-            # Usar -1 para permanente, o un número para que desaparezca
-            lifetime = 120.0  # 2 minutos
+            print(f"\n   🎨 DEBUG VISUALIZACIÓN:")
+            print(f"      Waypoints a dibujar: {len(waypoints)}")
+            print(f"      START loc: ({start_transform.location.x:.1f}, {start_transform.location.y:.1f}, {start_transform.location.z:.1f})")
+            print(f"      GOAL loc: ({end_transform.location.x:.1f}, {end_transform.location.y:.1f}, {end_transform.location.z:.1f})")
+            print(f"      Primer waypoint: ({waypoints[0].transform.location.x:.1f}, {waypoints[0].transform.location.y:.1f})")
+            print(f"      Último waypoint: ({waypoints[-1].transform.location.x:.1f}, {waypoints[-1].transform.location.y:.1f})")
+            print(f"      Altura dibujo: {z}m, Lifetime: {lifetime}s")
+            print(f"      Color verde: RGB({GREEN.r}, {GREEN.g}, {GREEN.b})")
             
-            # 1. Marcar punto de INICIO (azul, MUY GRANDE, MUY ALTO)
+            # Verificar que START y primer waypoint estén cerca
+            dist_start = start_transform.location.distance(waypoints[0].transform.location)
+            dist_end = end_transform.location.distance(waypoints[-1].transform.location)
+            print(f"      Distancia START a primer WP: {dist_start:.1f}m")
+            print(f"      Distancia GOAL a último WP: {dist_end:.1f}m")
+            
+            # 1. Marcar START (azul grande)
+            print(f"      ✏️  Dibujando START en ({start_transform.location.x:.1f}, {start_transform.location.y:.1f}, {start_transform.location.z + z:.1f})")
             debug.draw_point(
-                start_transform.location + carla.Location(z=5.0),  # 5 metros arriba
-                size=0.5,  # 5x más grande
+                start_transform.location + carla.Location(z=z),
+                size=0.2,
                 color=BLUE,
                 life_time=lifetime
             )
             debug.draw_string(
-                start_transform.location + carla.Location(z=7.0),  # Texto más arriba
-                "START",
+                start_transform.location + carla.Location(z=z + 2.0),
+                "S",
                 color=BLUE,
                 life_time=lifetime
             )
             
-            # 2. Marcar punto de DESTINO (rojo, MUY GRANDE, MUY ALTO)
+            # 2. Marcar GOAL (rojo grande)
+            print(f"      ✏️  Dibujando GOAL en ({end_transform.location.x:.1f}, {end_transform.location.y:.1f}, {end_transform.location.z + z:.1f})")
             debug.draw_point(
-                end_transform.location + carla.Location(z=5.0),  # 5 metros arriba
-                size=0.5,  # 5x más grande
+                end_transform.location + carla.Location(z=z),
+                size=0.2,
                 color=RED,
                 life_time=lifetime
             )
             debug.draw_string(
-                end_transform.location + carla.Location(z=7.0),  # Texto más arriba
-                "GOAL",
+                end_transform.location + carla.Location(z=z + 2.0),
+                "G",
                 color=RED,
                 life_time=lifetime
             )
             
-            # 3. Dibujar todos los waypoints de la ruta (verde, MUY VISIBLES, MUY ALTO)
-            for i, wp in enumerate(waypoints):
+            # 3. Dibujar SOLO cada 5to waypoint para reducir carga
+            wp_skip = 5  # Dibujar solo cada 5 waypoints
+            drawn_points = 0
+            for i in range(0, len(waypoints), wp_skip):
+                wp = waypoints[i]
                 location = wp.transform.location
-                
-                # Punto verde GRANDE para cada waypoint (5 metros arriba)
                 debug.draw_point(
-                    location + carla.Location(z=5.0),  # 5 metros arriba
-                    size=0.15,  # 3x más grande
+                    location + carla.Location(z=z),
+                    size=0.08,
                     color=GREEN,
                     life_time=lifetime
                 )
-                
-                # Cada 10 waypoints, dibujar número MÁS GRANDE
-                if i % 10 == 0:
-                    debug.draw_string(
-                        location + carla.Location(z=6.5),  # Texto más arriba
-                        str(i),
-                        color=GREEN,
-                        life_time=lifetime
-                    )
+                drawn_points += 1
+            print(f"      ✏️  Dibujados {drawn_points} puntos verdes (cada {wp_skip} waypoints)")
             
-            # 4. Dibujar líneas GRUESAS conectando los waypoints (MUY ALTO)
-            for i in range(len(waypoints) - 1):
+            # 4. Dibujar SOLO cada 10ma línea para reducir carga
+            line_skip = 10
+            drawn_lines = 0
+            for i in range(0, len(waypoints) - line_skip, line_skip):
                 wp1 = waypoints[i]
-                wp2 = waypoints[i + 1]
-                
+                wp2 = waypoints[i + line_skip]
                 debug.draw_line(
-                    wp1.transform.location + carla.Location(z=5.0),  # 5 metros arriba
-                    wp2.transform.location + carla.Location(z=5.0),  # 5 metros arriba
-                    thickness=0.15,  # 3x más grueso
+                    wp1.transform.location + carla.Location(z=z),
+                    wp2.transform.location + carla.Location(z=z),
+                    thickness=0.08,
                     color=GREEN,
                     life_time=lifetime
                 )
+                drawn_lines += 1
+            print(f"      ✏️  Dibujadas {drawn_lines} líneas verdes (cada {line_skip} waypoints)")
             
-            print(f"   👁️  Ruta visualizada: {len(waypoints)} waypoints (verde), START (azul), GOAL (rojo)")
+            print(f"   ✅ Visualización completa: START (azul) + {drawn_points} puntos + {drawn_lines} líneas + GOAL (rojo)\n")
             
-            # Posicionar cámara del spectator para ver toda la ruta
+            # View route from above (spectator only) and keep hero view clean
+            self.spectator_mode = 'route_overview'
             self._position_spectator_for_route(waypoints)
             
         except Exception as e:
             print(f"   ⚠️  Error visualizando ruta: {e}")
-    
+            import traceback
+            traceback.print_exc()
+
     def _position_spectator_for_route(self, waypoints):
         """
         Posiciona el spectator para tener una vista aérea de toda la ruta
@@ -656,38 +724,28 @@ class CarlaEnv(gym.Env):
             if not self.experiment.route_waypoints:
                 return
             
+            # Only draw updates in spectator overview to avoid hero camera
+            if self.spectator_mode != 'route_overview':
+                return
+            
             idx = self.experiment.current_waypoint_index
             if idx >= len(self.experiment.route_waypoints):
                 return
             
             current_wp = self.experiment.route_waypoints[idx]
             debug = self.core.world.debug
+            style = self._route_viz
+            z = style['z_offset']
             
-            # Marcar waypoint actual en amarillo (más visible, MUY ALTO)
+            # Subtle highlight of current waypoint
             debug.draw_point(
-                current_wp.transform.location + carla.Location(z=5.0),  # 5 metros arriba
-                size=0.2,  # Un poco más grande que los verdes
-                color=carla.Color(255, 255, 0),
-                life_time=0.5  # Solo 0.5 segundos (se actualiza constantemente)
+                current_wp.transform.location + carla.Location(z=z),
+                size=style['current_point_size'],
+                color=style['current_color'],
+                life_time=0.5
             )
-            
-            # Marcar posición del HERO con punto grande y texto para verlo desde muy alto
-            if self.hero is not None:
-                hero_loc = self.hero.get_location()
-                debug.draw_point(
-                    hero_loc + carla.Location(z=6.0),
-                    size=0.6,  # más grande para alta altitud
-                    color=carla.Color(255, 0, 255),  # magenta
-                    life_time=0.5
-                )
-                debug.draw_string(
-                    hero_loc + carla.Location(z=7.0),
-                    "HERO",
-                    color=carla.Color(255, 0, 255),
-                    life_time=0.5
-                )
         except Exception:
-            pass  # Silencioso para no llenar logs
+            pass
 
 
 
