@@ -112,41 +112,140 @@ def main():
     print("Initializing video recorder...")
     recorder = VideoRecorder(output_dir='render_output', fps=10)
     
-    print("Running simulation...")
-    total_reward = 0.0
+    # ==========================================
+    # TRAINING LOOP - Según paper Pérez-Gil et al. 2022
+    # ==========================================
+    print("\n" + "="*80)
+    print("🚀 INICIANDO ENTRENAMIENTO DRL-Flatten-Image")
+    print("="*80)
+    
+    # Hyperparameters según el paper
+    MAX_EPISODES = 500  # Paper: DQN necesita ~20K, DDPG solo ~500
+    MAX_STEPS_PER_EPISODE = 500
+    SAVE_EVERY_N_EPISODES = 50  # Guardar checkpoint cada 50 episodios
+    
+    # Desactivar guardado de renders (consume mucho espacio y tiempo)
+    SAVE_RENDERS = False
+    DEBUG_STATE_FIRST_3_STEPS = False  # Desactivar debug verbose
+    
+    # Statistics
+    episode_rewards = []
+    episode_lengths = []
+    best_reward = -float('inf')
+    best_episode = 0
+    
     try:
-        for j in range(5000):
-            # Check if user wants to quit (only if display is active)
-            if display and display.process_events():
-                print("User requested quit")
-                break
+        for episode in range(MAX_EPISODES):
+            # Reset environment for new episode with random route
+            state, _ = env.reset()
+            episode_reward = 0.0
+            episode_step = 0
             
-            action = agent.act(state)
-            env.render()  # ✅ ACTIVADO: Guardar imagen 11×11 que ve el agente
-            state, reward, done, _, _ = env.step(action)
-            total_reward += reward
+            print(f"\n📍 Episode {episode+1}/{MAX_EPISODES}")
             
-            # Update display if available
-            if display:
-                display.update(
-                    step=j+1,
+            for step in range(MAX_STEPS_PER_EPISODE):
+                # Check if user wants to quit (only if display is active)
+                if display and display.process_events():
+                    print("User requested quit")
+                    break
+                
+                # 🔍 DEBUG: Solo para los primeros 3 steps del primer episodio
+                if DEBUG_STATE_FIRST_3_STEPS and episode == 0 and step < 3:
+                    print(f"\n{'='*80}")
+                    print(f"🎯 ESTADO ANTES DE AGENTE (Episode {episode+1}, Step {step+1})")
+                    print(f"{'='*80}")
+                    # print(f"📊 Estado shape: {state.shape}")
+                    image_flat = state[:121]
+                    phi_t = state[121] if len(state) > 121 else 0.0
+                    d_t = state[122] if len(state) > 122 else 0.0
+                    image_11x11 = image_flat.reshape(11, 11)
+                    image_display = ((image_11x11 * 128) + 128).clip(0, 255).astype(np.uint8)
+                    h_var = np.mean([np.std(row) for row in image_display])
+                    print(f"   H-Var: {h_var:.1f}, φt: {np.degrees(phi_t):.2f}°, dt: {d_t:.3f}m")
+                    print(f"{'='*80}\n")
+                
+                # Agent selects action
+                action = agent.act(state)
+                
+                # Guardar render solo si está activado (desactivado por defecto)
+                if SAVE_RENDERS:
+                    env.render()
+                
+                # Execute action
+                next_state, reward, done, _, _ = env.step(action)
+                
+                # Agent learns from experience
+                agent.step(state, action, reward, next_state, done)
+                
+                # Update state and statistics
+                state = next_state
+                episode_reward += reward
+                episode_step += 1
+                
+                # Update display if available
+                if display:
+                    display.update(
+                        step=episode_step,
+                        reward=reward,
+                        total_reward=episode_reward,
+                        done=done
+                    )
+                
+                # Record frame with video recorder
+                recorder.add_frame(
+                    observation=state,
+                    step=episode_step,
                     reward=reward,
-                    total_reward=total_reward,
+                    total_reward=episode_reward,
                     done=done
                 )
+                
+                # Episode termination
+                if done:
+                    print(f"   ✓ Episode finished at step {episode_step}: Total reward = {episode_reward:.2f}")
+                    break
             
-            # Record frame with HUD info
-            recorder.add_frame(
-                observation=state,
-                step=j+1,
-                reward=reward,
-                total_reward=total_reward,
-                done=done
-            )
+            # End of episode - save statistics
+            episode_rewards.append(episode_reward)
+            episode_lengths.append(episode_step)
             
-            print(f"Step {j+1}: reward={reward}, done={done}")
-            if done:
-                break
+            # Check if this is the best episode so far
+            if episode_reward > best_reward:
+                best_reward = episode_reward
+                best_episode = episode + 1
+                print(f"   🏆 NEW BEST! Episode {episode+1}: Reward = {episode_reward:.2f}")
+            
+            # Save checkpoint every N episodes
+            if (episode + 1) % SAVE_EVERY_N_EPISODES == 0:
+                checkpoint_path = f'checkpoints/drl_flatten_episode_{episode+1}.pth'
+                agent.save(checkpoint_path)
+                print(f"   💾 Checkpoint saved: {checkpoint_path}")
+                print(f"   📊 Avg reward (last {SAVE_EVERY_N_EPISODES}): {np.mean(episode_rewards[-SAVE_EVERY_N_EPISODES:]):.2f}")
+            
+            # Print episode summary every 10 episodes
+            if (episode + 1) % 10 == 0:
+                avg_reward = np.mean(episode_rewards[-10:])
+                avg_length = np.mean(episode_lengths[-10:])
+                print(f"\n📈 Episodes {episode-8}-{episode+1} Summary:")
+                print(f"   Avg Reward: {avg_reward:.2f}")
+                print(f"   Avg Length: {avg_length:.1f} steps")
+                print(f"   Best so far: Episode {best_episode} with {best_reward:.2f}")
+        
+        # Training complete
+        print("\n" + "="*80)
+        print("✅ TRAINING COMPLETED!")
+        print("="*80)
+        print(f"Total episodes: {MAX_EPISODES}")
+        print(f"Best episode: {best_episode} with reward {best_reward:.2f}")
+        print(f"Average reward (all episodes): {np.mean(episode_rewards):.2f}")
+        
+        # Save final model
+        final_model_path = 'checkpoints/drl_flatten_final.pth'
+        agent.save(final_model_path)
+        print(f"💾 Final model saved: {final_model_path}")
+        
+    except KeyboardInterrupt:
+        print("\n⚠️  Training interrupted by user")
     finally:
         print("Closing environment...")
         if display:

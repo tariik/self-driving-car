@@ -98,8 +98,8 @@ class DRLFlattenAgent():
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR)
 
 
-        # Replay memory
-        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed)
+        # Replay memory - pass device to ReplayBuffer
+        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed, self.device)
 
         # Initialize time step (for updating every UPDATE_EVERY steps)
         self.t_step = 0
@@ -191,12 +191,46 @@ class DRLFlattenAgent():
         """
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
             target_param.data.copy_(tau*local_param.data + (1.0-tau)*target_param.data)
+    
+    def save(self, filepath):
+        """
+        Save the agent's Q-networks and optimizer state.
+        
+        Params
+        ======
+            filepath (str): Path where to save the checkpoint
+        """
+        import os
+        os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else '.', exist_ok=True)
+        
+        checkpoint = {
+            'qnetwork_local_state_dict': self.qnetwork_local.state_dict(),
+            'qnetwork_target_state_dict': self.qnetwork_target.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'memory_size': len(self.memory),
+        }
+        torch.save(checkpoint, filepath)
+    
+    def load(self, filepath):
+        """
+        Load a previously saved agent checkpoint.
+        
+        Params
+        ======
+            filepath (str): Path to the checkpoint file
+        """
+        checkpoint = torch.load(filepath, map_location=self.device)
+        self.qnetwork_local.load_state_dict(checkpoint['qnetwork_local_state_dict'])
+        self.qnetwork_target.load_state_dict(checkpoint['qnetwork_target_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print(f"✓ Model loaded from {filepath}")
+        print(f"   Memory had {checkpoint.get('memory_size', 0)} experiences")
 
 
 class ReplayBuffer:
     """Fixed-size buffer to store experience tuples."""
 
-    def __init__(self, action_size, buffer_size, batch_size, seed):
+    def __init__(self, action_size, buffer_size, batch_size, seed, device):
         """Initialize a ReplayBuffer object.
 
         Params
@@ -205,12 +239,14 @@ class ReplayBuffer:
             buffer_size (int): maximum size of buffer
             batch_size (int): size of each training batch
             seed (int): random seed
+            device: torch device (cuda or cpu)
         """
         self.action_size = action_size
         self.memory = deque(maxlen=buffer_size)  
         self.batch_size = batch_size
         self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
         self.seed = random.seed(seed)
+        self.device = device
     
     def add(self, state, action, reward, next_state, done):
         """Add a new experience to memory."""
