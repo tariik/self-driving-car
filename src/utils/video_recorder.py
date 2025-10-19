@@ -22,20 +22,66 @@ class VideoRecorder:
         print(f"📁 Output: {output_dir}")
     
     def add_frame(self, observation, step=0, reward=0.0, total_reward=0.0, done=False):
-        """Add a frame to the video"""
+        """Add a frame to the video
+        Robustly handles the 123-dim observation vector: [121 image pixels, φt, dt]
+        """
         try:
-            # Take the last frame if it's a stack
-            if len(observation.shape) == 3:
-                frame = observation[:, :, -1]
+            # Build an 11x11 grayscale image from the observation
+            img_array = None
+            phi_t = None
+            d_t = None
+
+            if isinstance(observation, np.ndarray) and observation.ndim == 1 and observation.size >= 121:
+                # State vector: [121 image, φt, dt]
+                img_flat = observation[:121]
+                try:
+                    img_array = img_flat.reshape(11, 11)
+                except Exception:
+                    # Fallback to square if possible
+                    side = int(np.sqrt(121))
+                    img_array = img_flat.reshape(side, side)
+                # Extract driving features if present
+                if observation.size > 121:
+                    phi_t = float(observation[121]) if observation.size > 121 else None
+                    d_t = float(observation[122]) if observation.size > 122 else None
+            elif isinstance(observation, np.ndarray) and observation.ndim == 2:
+                # Already a 2D image
+                img_array = observation
+            elif isinstance(observation, np.ndarray) and observation.ndim == 3:
+                # Use last channel if stack
+                img_array = observation[:, :, -1]
             else:
-                frame = observation
-            
-            # Convert to uint8
-            if frame.dtype != np.uint8:
-                frame = (frame * 255).astype(np.uint8)
-            
-            # Scale up to 336x336 for better visibility
-            img = Image.fromarray(frame, mode='L')
+                # Unknown format, try to coerce
+                obs = np.array(observation)
+                if obs.ndim == 1 and obs.size >= 121:
+                    img_array = obs[:121].reshape(11, 11)
+                elif obs.ndim == 2:
+                    img_array = obs
+                elif obs.ndim == 3:
+                    img_array = obs[:, :, -1]
+                else:
+                    raise ValueError(f"Unsupported observation shape: {obs.shape}")
+
+            # Ensure float32 for normalization logic
+            img_float = img_array.astype(np.float32)
+
+            # Detect normalization range and denormalize properly
+            vmin, vmax = float(np.min(img_float)), float(np.max(img_float))
+            # If values in [-1, 1] assume our normalized pipeline
+            if vmin >= -1.01 and vmax <= 1.01:
+                img_uint8 = ((img_float * 128.0) + 128.0).clip(0, 255).astype(np.uint8)
+            # If values in [0, 255], it's already uint-like
+            elif vmin >= 0 and vmax <= 255:
+                img_uint8 = img_float.clip(0, 255).astype(np.uint8)
+            else:
+                # Fallback: scale to 0-255
+                if (vmax - vmin) < 1e-6:
+                    img_uint8 = np.zeros_like(img_float, dtype=np.uint8)
+                else:
+                    img_uint8 = ((img_float - vmin) * (255.0 / (vmax - vmin))).clip(0, 255).astype(np.uint8)
+
+            # Create PIL image and scale up to 336x336
+            img = Image.fromarray(img_uint8, mode='L')
             img = img.resize((336, 336), Image.NEAREST)
             
             # Convert to RGB for adding text
@@ -46,7 +92,7 @@ class VideoRecorder:
             try:
                 font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
                 font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
-            except:
+            except Exception:
                 font = ImageFont.load_default()
                 font_large = font
             
@@ -65,6 +111,12 @@ class VideoRecorder:
             hud_y += 18
             draw.text((10, hud_y), f"Total: {total_reward:.2f}", fill=color, font=font)
             hud_y += 18
+            if phi_t is not None and d_t is not None:
+                # Show driving features if available
+                draw.text((10, hud_y), f"phi: {phi_t:.3f} rad ({np.degrees(phi_t):.1f}°)", fill=(173, 216, 230), font=font)
+                hud_y += 18
+                draw.text((10, hud_y), f"d: {d_t:.3f} m", fill=(173, 216, 230), font=font)
+                hud_y += 18
             
             status_color = (255, 0, 0) if done else (0, 255, 0)
             draw.text((10, hud_y), f"Status: {'DONE' if done else 'Active'}", fill=status_color, font=font)

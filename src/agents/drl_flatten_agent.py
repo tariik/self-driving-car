@@ -30,20 +30,26 @@ if torch.cuda.is_available():
 
 class DRLFlattenAgent():
     """
-    Deep Reinforcement Learning agent that processes grayscale (B/W) images for autonomous driving.
+    DRL-Flatten-Image Agent (Pérez-Gil et al. 2022)
     
-    This agent uses a bird's eye view grayscale camera image (84x84x1) with frame stacking (4 frames)
-    to create a state representation of shape (84, 84, 4). The state is flattened to a 
-    1D vector of 28,224 dimensions and processed through a fully-connected neural network.
+    Implementación exacta del paper "Deep reinforcement learning based control for 
+    Autonomous Vehicles in CARLA" - Sección 5.1
     
-    Architecture:
-    - Input: Grayscale images (84x84x1) stacked over 4 frames → (84, 84, 4)
-    - Flattened to: 28,224-dimensional vector (84 * 84 * 4)
-    - Network: Fully-connected layers (fc1: 28224→64, fc2: 64→32, fc3: 32→action_size)
-    - Learning: Deep Q-Network (DQN) with experience replay
+    Estado (Ecuación 21):
+    S = ([Pt0, Pt1, ...Pt120], φt, dt)
     
-    Converting to grayscale reduces dimensionality while retaining essential road structure
-    information needed for navigation.
+    Componentes:
+    - Imagen B/W: 11x11 pixels → aplanada a 121 valores
+    - φt: Ángulo al carril (1 valor)
+    - dt: Distancia al centro del carril (1 valor)
+    - Total: 121 + 1 + 1 = 123 dimensiones
+    
+    Arquitectura:
+    - Input: Vector 1D de 123 dimensiones
+    - fc1: 123 → 64 (ReLU)
+    - fc2: 64 → 32 (ReLU)
+    - fc3: 32 → 27 acciones
+    - Learning: Deep Q-Network (DQN) con experience replay
     """
 
     def __init__(self, env, seed):
@@ -58,12 +64,12 @@ class DRLFlattenAgent():
         self.observation_space = env.observation_space
         self.action_space = env.action_space
         
-        # Store the actual shape for later use in flattening
+        # State size should be 123 (121 image + 1 φt + 1 dt)
         self.state_shape = env.observation_space.shape
         
-        # Calculate the flattened state size correctly
+        # Calculate the flattened state size
         state_size = int(np.prod(env.observation_space.shape))
-        print(f"Calculated state_size: {state_size}")
+        print(f"📊 State size: {state_size} (expected 123 for paper config)")
         
         action_size = env.action_space.n
         

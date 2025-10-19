@@ -55,7 +55,7 @@ def main():
         }
     }
     experiment_config["hero"]["spawn_points"] = []
-    experiment_config["town"] = "Town05_Opt"
+    experiment_config["town"] = "Town01"
     experiment_config["weather"] = "ClearNoon"
     experiment_config["others"] = config["others"]
     

@@ -69,11 +69,18 @@ class CarlaSensor(BaseSensor):
         for key, value in attributes.items():
             blueprint.set_attribute(str(key), str(value))
 
-        transform = carla.Transform(
+        transform_obj = carla.Transform(
             carla.Location(transform[0], transform[1], transform[2]),
             carla.Rotation(transform[4], transform[5], transform[3])
         )
-        self.sensor = world.spawn_actor(blueprint, transform, attach_to=self.parent)
+        
+        # 🔍 DEBUG: Imprimir configuración de cámara
+        if type_ == "sensor.camera.rgb":
+            print(f"   🎥 Spawning camera '{name}':")
+            print(f"      Location: x={transform[0]}, y={transform[1]}, z={transform[2]}")
+            print(f"      Rotation: pitch={transform[4]}, yaw={transform[5]}, roll={transform[3]}")
+        
+        self.sensor = world.spawn_actor(blueprint, transform_obj, attach_to=self.parent)
 
         self.sensor.listen(self.callback)
 

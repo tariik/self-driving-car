@@ -1,0 +1,175 @@
+════════════════════════════════════════════════════════════════════
+👁️  VISUALIZACIÓN DE WAYPOINTS EN 3D - IMPLEMENTADA ✅
+════════════════════════════════════════════════════════════════════
+
+🎨 SISTEMA DE COLORES
+────────────────────────────────────────────────────────────────────
+🔵 AZUL     = START (punto de inicio)
+🟢 VERDE    = Waypoints de la ruta
+🔴 ROJO     = GOAL (punto de destino)
+🟡 AMARILLO = Waypoint actual (se actualiza cada step)
+
+✨ CARACTERÍSTICAS
+────────────────────────────────────────────────────────────────────
+✅ Solo visible en SPECTATOR (no en cámara del agente)
+✅ No afecta las observaciones del agente
+✅ Actualización en tiempo real (cada step)
+✅ Líneas verdes conectando todos los waypoints
+✅ Texto "START" y "GOAL"
+✅ Números cada 10 waypoints
+✅ Marcador dinámico amarillo del progreso
+✅ Lifetime: 120 segundos (configurable)
+✅ Bajo overhead de performance
+
+🔧 IMPLEMENTACIÓN
+────────────────────────────────────────────────────────────────────
+Métodos añadidos en src/env/carla_env.py:
+
+1. _visualize_route(waypoints, start_transform, end_transform)
+   • Dibuja toda la ruta al generar
+   • Marca START (azul), GOAL (rojo)
+   • Dibuja waypoints (verde) y líneas conectoras
+   • Añade texto cada 10 waypoints
+
+2. _update_route_visualization()
+   • Marca waypoint actual en amarillo
+   • Se llama automáticamente en cada step()
+   • Lifetime corto (0.5s) para actualización dinámica
+
+Integración automática:
+   • Se activa con use_random_routes=True
+   • Llamada en reset() → visualiza ruta completa
+   • Llamada en step() → actualiza waypoint actual
+
+🚀 USO
+────────────────────────────────────────────────────────────────────
+# Activar visualización
+config["use_random_routes"] = True
+env = CarlaEnv(experiment, config)
+
+# Reset genera y visualiza ruta
+obs, info = env.reset()
+# ✅ Ruta dibujada en el mundo 3D
+
+# Training loop
+for step in range(1000):
+    obs, reward, done, _, info = env.step(action)
+    # 🟡 Waypoint actual marcado automáticamente
+    
+    route_info = experiment.get_route_info(core)
+    # Ver progreso: WPs completados, distancia, etc.
+
+💡 CASOS DE USO
+────────────────────────────────────────────────────────────────────
+✅ Debugging de rutas
+   → Verificar que A* genera rutas correctas
+   → Identificar problemas en el planner
+
+✅ Monitoreo de training
+   → Ver en tiempo real si el agente sigue la ruta
+   → Identificar patrones de comportamiento
+
+✅ Análisis de errores
+   → Ver dónde ocurrieron colisiones
+   → Identificar waypoints problemáticos
+
+✅ Validación de algoritmo
+   → Verificar tracking de waypoints
+   → Confirmar detección de meta
+
+📊 TEST EJECUTADO
+────────────────────────────────────────────────────────────────────
+✅ test_waypoint_visualization.py PASSED
+
+Resultados:
+   • Ruta generada: 170 waypoints, 338.8m
+   • Visualización: ✅ ACTIVA
+   • START: marcado en azul
+   • GOAL: marcado en rojo
+   • Waypoints: 170 puntos verdes con líneas
+   • Progreso: 6 waypoints pasados en 30 steps
+   • Marcador actual: 🟡 actualizado cada step
+
+🔍 API DE CARLA USADA
+────────────────────────────────────────────────────────────────────
+debug = world.debug
+
+# Dibujar punto
+debug.draw_point(location, size=0.1, color=carla.Color(r,g,b), life_time=10.0)
+
+# Dibujar línea
+debug.draw_line(begin, end, thickness=0.1, color=carla.Color(r,g,b), life_time=10.0)
+
+# Dibujar texto
+debug.draw_string(location, text="Texto", color=carla.Color(r,g,b), life_time=10.0)
+
+📁 ARCHIVOS
+────────────────────────────────────────────────────────────────────
+MODIFICADOS:
+  • src/env/carla_env.py
+    - _visualize_route() [NUEVO]
+    - _update_route_visualization() [NUEVO]
+    - Integración en step()
+
+NUEVOS:
+  • test_waypoint_visualization.py (200+ líneas)
+  • WAYPOINT_VISUALIZATION.md (documentación completa)
+
+📖 EJEMPLO VISUAL
+────────────────────────────────────────────────────────────────────
+   🔵 ════🟢════🟢════🟢════🟢════🟢════🟢════🟡════🟢════🟢════🔴
+  START    10    20    30    40    50    60   ACTUAL   80    90  GOAL
+   
+   Leyenda:
+   🔵 = Punto de inicio (azul, grande)
+   🟢 = Waypoints de la ruta (verde, pequeño)
+   🟡 = Waypoint actual (amarillo, mediano, se mueve)
+   🔴 = Punto de destino (rojo, grande)
+   ════ = Líneas verdes conectando waypoints
+
+⚙️ CONFIGURACIÓN AVANZADA
+────────────────────────────────────────────────────────────────────
+# Cambiar lifetime (duración)
+lifetime = 300.0  # 5 minutos
+lifetime = -1.0   # Permanente
+
+# Cambiar colores
+CUSTOM_GREEN = carla.Color(100, 255, 100)
+CUSTOM_BLUE = carla.Color(50, 150, 255)
+
+# Cambiar frecuencia de números
+if i % 5 == 0:  # Cada 5 waypoints en vez de 10
+    debug.draw_string(...)
+
+# Desactivar visualización
+self.visualize_route = False
+if self.experiment.use_random_routes and self.visualize_route:
+    self._update_route_visualization()
+
+✅ VENTAJAS
+────────────────────────────────────────────────────────────────────
+✅ NO afecta observaciones del agente
+✅ Bajo overhead de performance
+✅ Actualización en tiempo real
+✅ Intuitivo y fácil de entender
+✅ Configurable (colores, tamaños, lifetime)
+✅ Perfecto para debugging y demos
+
+⚠️ CONSIDERACIONES
+────────────────────────────────────────────────────────────────────
+• Los elementos solo son visibles en el spectator
+• Requiere CARLA server con rendering habilitado
+• Lifetime muy largo puede acumular elementos
+• No usar en training sin visualización (overhead innecesario)
+
+🎯 PRÓXIMAS MEJORAS POSIBLES
+────────────────────────────────────────────────────────────────────
+• Flechas de dirección en cada waypoint
+• Colores según velocidad target
+• Traza del camino recorrido
+• Marcar puntos de colisión
+• Marcar puntos de invasión de carril
+
+════════════════════════════════════════════════════════════════════
+✅ FEATURE LISTA PARA USAR EN TRAINING
+════════════════════════════════════════════════════════════════════

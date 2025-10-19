@@ -11,7 +11,7 @@ import weakref
 class DisplayManager:
     """Manages pygame window for real-time visualization with CARLA camera"""
     
-    def __init__(self, world, hero_vehicle, width=800, height=600):
+    def __init__(self, world, hero_vehicle, width=800, height=600, follow_spectator=False):
         """Initialize pygame display with CARLA camera
         
         Args:
@@ -19,6 +19,7 @@ class DisplayManager:
             hero_vehicle: The hero vehicle actor to attach camera to
             width: Window width
             height: Window height
+            follow_spectator: If True, the window shows the SPECTATOR view (camera is not attached to hero)
         """
         pygame.init()
         pygame.font.init()
@@ -27,6 +28,7 @@ class DisplayManager:
         self.hero_vehicle = hero_vehicle
         self.width = width
         self.height = height
+        self.follow_spectator = follow_spectator
         
         # Create pygame window
         self.display = pygame.display.set_mode(
@@ -57,7 +59,7 @@ class DisplayManager:
         print(f"✓ Display window opened: {width}x{height}")
     
     def _setup_camera(self):
-        """Setup RGB camera sensor attached to hero vehicle"""
+        """Setup RGB camera sensor attached to hero vehicle or following spectator"""
         try:
             bp_library = self.world.get_blueprint_library()
             camera_bp = bp_library.find('sensor.camera.rgb')
@@ -67,19 +69,27 @@ class DisplayManager:
             camera_bp.set_attribute('image_size_y', str(self.height))
             camera_bp.set_attribute('fov', '110')
             
-            # Camera position: behind and above the vehicle
-            camera_transform = carla.Transform(
-                carla.Location(x=-5.5, z=2.8),
-                carla.Rotation(pitch=-15)
-            )
-            
-            # Spawn camera
-            self.camera_sensor = self.world.spawn_actor(
-                camera_bp,
-                camera_transform,
-                attach_to=self.hero_vehicle,
-                attachment_type=carla.AttachmentType.SpringArm
-            )
+            if self.follow_spectator:
+                # Spawn a FREE camera at spectator transform (not attached)
+                spectator_tf = self.world.get_spectator().get_transform()
+                self.camera_sensor = self.world.spawn_actor(
+                    camera_bp,
+                    spectator_tf,
+                )
+            else:
+                # Camera position: behind and above the vehicle
+                camera_transform = carla.Transform(
+                    carla.Location(x=-5.5, z=2.8),
+                    carla.Rotation(pitch=-15)
+                )
+                
+                # Spawn camera attached to hero (spring arm)
+                self.camera_sensor = self.world.spawn_actor(
+                    camera_bp,
+                    camera_transform,
+                    attach_to=self.hero_vehicle,
+                    attachment_type=carla.AttachmentType.SpringArm
+                )
             
             # Setup callback
             weak_self = weakref.ref(self)
@@ -163,6 +173,14 @@ class DisplayManager:
     
     def update(self, step=0, reward=0.0, total_reward=0.0, done=False):
         """Update display with new data"""
+        # If following spectator, sync camera to spectator transform each frame
+        if self.follow_spectator and self.camera_sensor is not None:
+            try:
+                spectator_tf = self.world.get_spectator().get_transform()
+                self.camera_sensor.set_transform(spectator_tf)
+            except Exception:
+                pass
+        
         # Clear display
         self.display.fill((0, 0, 0))
         

@@ -14,18 +14,27 @@ echo "  🚗 CARLA DRL Training Setup"
 echo "════════════════════════════════════════════"
 echo ""
 
-# 1. Matar instancias previas de CARLA
-echo "🔍 Paso 1/4: Limpiando instancias previas de CARLA..."
+# 1. Verificar si CARLA está corriendo (NO cerrar)
+echo "🔍 Paso 1/4: Verificando instancia de CARLA..."
 CARLA_PIDS=$(ps aux | grep "CarlaUE4-Linux-Shipping" | grep -v grep | awk '{print $2}')
 if [ ! -z "$CARLA_PIDS" ]; then
-    echo "   ⚠️  Instancias encontradas, cerrando..."
-    for pid in $CARLA_PIDS; do
-        kill -9 $pid 2>/dev/null || true
-    done
-    sleep 2
-    echo "   ✓ Instancias cerradas"
+    echo "   ✓ CARLA ya está corriendo (PID: $CARLA_PIDS)"
+    echo "   ℹ️  Usando instancia existente (no se cerrará)"
 else
-    echo "   ✓ No hay instancias previas"
+    echo "   ⚠️  CARLA no está corriendo"
+    echo "   💡 Inicia CARLA manualmente: ./launch_carla.sh"
+    echo ""
+    read -p "¿Quieres que inicie CARLA ahora? (y/n): " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo "   🚀 Iniciando CARLA..."
+        bash "$SCRIPT_DIR/launch_carla.sh" &
+        sleep 10
+        echo "   ✓ CARLA iniciado"
+    else
+        echo "   ❌ CARLA debe estar corriendo para entrenar"
+        exit 1
+    fi
 fi
 echo ""
 
@@ -48,26 +57,34 @@ echo "   ✓ Entorno virtual activado: $VIRTUAL_ENV"
 echo "   ✓ Python: $(which python)"
 echo ""
 
-# 3. Lanzar CARLA Server con DISPLAY
-echo "🚀 Paso 3/4: Lanzando CARLA Server..."
-echo "   - Display: :51.0"
-echo "   - Quality: Low"
-echo "   - Port: 3000"
-echo "   - Mode: RenderOffScreen"
-
-cd "$CARLA_DIR"
-DISPLAY=:51.0 ./CarlaUE4.sh -RenderOffScreen -quality-level=low -carla-rpc-port=3000 > /tmp/carla.log 2>&1 &
-CARLA_PID=$!
-
-echo "   ⏳ Esperando inicio del servidor (10 segundos)..."
-sleep 10
-
-if ps -p $CARLA_PID > /dev/null; then
-    echo "   ✓ CARLA Server está corriendo (PID: $CARLA_PID)"
+# 3. Lanzar CARLA Server solo si NO está corriendo
+echo "🚀 Paso 3/4: Verificando CARLA Server..."
+CARLA_PIDS=$(ps aux | grep "CarlaUE4-Linux-Shipping" | grep -v grep | awk '{print $2}')
+if [ ! -z "$CARLA_PIDS" ]; then
+    echo "   ✓ CARLA Server ya está corriendo (PID: $CARLA_PIDS)"
+    echo "   ℹ️  Usando servidor existente en puerto 3000"
+    CARLA_PID=$CARLA_PIDS
 else
-    echo "   ❌ Error: CARLA no se inició correctamente"
-    echo "   Ver log: tail /tmp/carla.log"
-    exit 1
+    echo "   🚀 Lanzando CARLA Server..."
+    echo "   - Display: :51.0"
+    echo "   - Quality: Low"
+    echo "   - Port: 3000"
+    echo "   - Mode: RenderOffScreen"
+    
+    cd "$CARLA_DIR"
+    DISPLAY=:51.0 ./CarlaUE4.sh -RenderOffScreen -quality-level=low -carla-rpc-port=3000 > /tmp/carla.log 2>&1 &
+    CARLA_PID=$!
+    
+    echo "   ⏳ Esperando inicio del servidor (10 segundos)..."
+    sleep 10
+    
+    if ps -p $CARLA_PID > /dev/null; then
+        echo "   ✓ CARLA Server está corriendo (PID: $CARLA_PID)"
+    else
+        echo "   ❌ Error: CARLA no se inició correctamente"
+        echo "   Ver log: tail /tmp/carla.log"
+        exit 1
+    fi
 fi
 echo ""
 
@@ -87,8 +104,8 @@ echo "════════════════════════�
 echo ""
 
 # Lanzar el entrenamiento con DISPLAY para que pygame funcione
-cd "$SCRIPT_DIR/src"
-DISPLAY=:51.0 python main.py
+cd "$SCRIPT_DIR"
+DISPLAY=:51.0 python src/main.py
 
 echo ""
 echo "════════════════════════════════════════════"
