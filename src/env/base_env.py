@@ -71,14 +71,15 @@ class BaseEnv:
         return Discrete(len(self.get_actions()))
 
     def get_observation_space(self):
-        num_of_channels = 3
+        # Use 1 channel for grayscale images instead of 3 for RGB
+        num_of_channels = 1
         image_space = Box(
             low=0.0,
             high=255.0,
             shape=(
                 self.config["hero"]["sensors"]["rgb_camera"]["size"],
                 self.config["hero"]["sensors"]["rgb_camera"]["size"],
-                num_of_channels * self.frame_stack,
+                num_of_channels * self.frame_stack,  # 1 channel * 4 frames = 4 total channels
             ),
             dtype=np.uint8,
         )
@@ -141,7 +142,8 @@ class BaseEnv:
         The information variable can be empty
         """
        
-        image = self.post_process_image(sensor_data, normalized = True, grayscale = False)
+        # Convert RGB to grayscale (B/W) to reduce dimensionality
+        image = self.post_process_image(sensor_data, normalized=True, grayscale=True)
 
         if self.prev_image_0 is None:
             self.prev_image_0 = image
@@ -166,10 +168,10 @@ class BaseEnv:
 
     def get_speed(self, hero):
         """Computes the speed of the hero vehicle in Km/h"""
-        from collections import namedtuple
-        Velocity = namedtuple("Velocity", ["x", "y", "z"])
-        vel = Velocity(30.0, 0.0, 0.0)  # Replace with hero.get_velocity() when available
-        # TODO :vel = hero.get_velocity()
+        #from collections import namedtuple
+        #Velocity = namedtuple("Velocity", ["x", "y", "z"])
+        #vel = Velocity(30.0, 0.0, 0.0)  # Replace with hero.get_velocity() when available
+        vel = hero.get_velocity()
         return 3.6 * math.sqrt(vel.x ** 2 + vel.y ** 2 + vel.z ** 2)
 
     def get_done_status(self, observation, core):
@@ -282,18 +284,36 @@ class BaseEnv:
         # image = sensor_data['birdview'][1]
         
         
-        
-        image = sensor_data['rgb_camera'][0]
+        # sensor_data format: {sensor_name: (frame, parsed_data)}
+        # So sensor_data['rgb_camera'] is (frame, image)
+        # We need the image which is at index [1]
+        image = sensor_data['rgb_camera'][1]
       
         if isinstance(image, list):
             image = image[0]
+        
+        # Get the target size from config
+        target_size = self.config["hero"]["sensors"]["rgb_camera"]["size"]
+        
         # RGB to (B/W)
         if grayscale:
             image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-            image = image[:, :, np.newaxis]
-            
-        # Redimensionar la imagen a 11x11
-        image = cv2.resize(image, (11, 11))
+            # Resize the image to target_size x target_size
+            image = cv2.resize(image, (target_size, target_size))
+            # Make sure grayscale has the channel dimension
+            if len(image.shape) == 2:
+                image = image[:, :, np.newaxis]
+        else:
+            # Keep RGB (3 channels)
+            # Resize the image to target_size x target_size
+            image = cv2.resize(image, (target_size, target_size))
+            # Make sure it has 3 channels
+            if len(image.shape) == 2:
+                # If somehow it's grayscale, add channel dimension
+                image = image[:, :, np.newaxis]
+            elif len(image.shape) == 3 and image.shape[2] == 4:
+                # If it has alpha channel, remove it
+                image = image[:, :, :3]
         
 
         if normalized:

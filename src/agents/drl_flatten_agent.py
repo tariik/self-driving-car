@@ -9,25 +9,50 @@ import torch.optim as optim
 
 
 BUFFER_SIZE = int(1e5)  # replay buffer size
-BATCH_SIZE = 64         # minibatch size
+BATCH_SIZE = 32         # minibatch size (reduced from 64 to save GPU memory)
 GAMMA = 0.99            # discount factor
 TAU = 1e-3              # for soft update of target parameters
 LR = 5e-4               # learning rate 
 UPDATE_EVERY = 4        # how often to update the network
 
+# Use GPU if available, otherwise use CPU
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
+# Clear GPU cache and set memory optimization if using CUDA
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+    # Enable memory optimization
+    torch.backends.cudnn.benchmark = True
+    print(f"GPU Memory allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
+    print(f"GPU Memory reserved: {torch.cuda.memory_reserved(0) / 1024**2:.2f} MB")
+    print(f"GPU Memory available: ~{(torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_reserved(0)) / 1024**2:.2f} MB")
 
 class DRLFlattenAgent():
-    """Interacts with and learns from the environment."""
+    """
+    Deep Reinforcement Learning agent that processes grayscale (B/W) images for autonomous driving.
+    
+    This agent uses a bird's eye view grayscale camera image (84x84x1) with frame stacking (4 frames)
+    to create a state representation of shape (84, 84, 4). The state is flattened to a 
+    1D vector of 28,224 dimensions and processed through a fully-connected neural network.
+    
+    Architecture:
+    - Input: Grayscale images (84x84x1) stacked over 4 frames → (84, 84, 4)
+    - Flattened to: 28,224-dimensional vector (84 * 84 * 4)
+    - Network: Fully-connected layers (fc1: 28224→64, fc2: 64→32, fc3: 32→action_size)
+    - Learning: Deep Q-Network (DQN) with experience replay
+    
+    Converting to grayscale reduces dimensionality while retaining essential road structure
+    information needed for navigation.
+    """
 
     def __init__(self, env, seed):
         """Initialize an Agent object.
         
         Params
         ======
-            state_size (int): dimension of each state
-            action_size (int): dimension of each action
-            seed (int): random seed
+            env: The Gymnasium environment
+            seed (int): random seed for reproducibility
         """
         # Get dimensions from environment
         self.observation_space = env.observation_space
@@ -47,10 +72,23 @@ class DRLFlattenAgent():
         
         self.seed = random.seed(seed)
 
-
-        # Q-Network
-        self.qnetwork_local = QNetwork(state_size, action_size, seed).to(device)
-        self.qnetwork_target = QNetwork(state_size, action_size, seed).to(device)
+        # Q-Network - Try GPU first, fallback to CPU if out of memory
+        self.device = device  # Store device in instance
+        try:
+            self.qnetwork_local = QNetwork(state_size, action_size, seed).to(self.device)
+            self.qnetwork_target = QNetwork(state_size, action_size, seed).to(self.device)
+            print(f"✓ Networks loaded on {self.device}")
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                print(f"⚠️ GPU out of memory, falling back to CPU")
+                self.device = torch.device("cpu")
+                torch.cuda.empty_cache()
+                self.qnetwork_local = QNetwork(state_size, action_size, seed).to(self.device)
+                self.qnetwork_target = QNetwork(state_size, action_size, seed).to(self.device)
+                print(f"✓ Networks loaded on CPU")
+            else:
+                raise e
+                
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr=LR)
 
 
@@ -95,7 +133,7 @@ class DRLFlattenAgent():
             state_flat = state_array
         
        
-        state = torch.from_numpy(state_flat).float().unsqueeze(0).to(device)
+        state = torch.from_numpy(state_flat).float().unsqueeze(0).to(self.device)
         self.qnetwork_local.eval()
         with torch.no_grad():
             action_values = self.qnetwork_local(state)
@@ -177,11 +215,11 @@ class ReplayBuffer:
         """Randomly sample a batch of experiences from memory."""
         experiences = random.sample(self.memory, k=self.batch_size)
 
-        states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(device)
-        actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).long().to(device)
-        rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
-        next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
-        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(device)
+        states = torch.from_numpy(np.vstack([e.state for e in experiences if e is not None])).float().to(self.device)
+        actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).long().to(self.device)
+        rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(self.device)
+        next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(self.device)
+        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(self.device)
   
         return (states, actions, rewards, next_states, dones)
 
@@ -192,17 +230,25 @@ class ReplayBuffer:
 
 
 class QNetwork(nn.Module):
-    """Actor (Policy) Model."""
+    """
+    Q-Network for processing flattened grayscale image states.
+    
+    Architecture:
+    - Input: Flattened state vector (84 * 84 * 4 = 28,224 dimensions)
+    - Layer 1: Fully connected (28,224 → 64 units) + ReLU
+    - Layer 2: Fully connected (64 → 32 units) + ReLU  
+    - Output: Fully connected (32 → action_size)
+    """
 
-    def __init__(self, state_size, action_size, seed, fc1_units=64, fc2_units=64):
+    def __init__(self, state_size, action_size, seed, fc1_units=64, fc2_units=32):
         """Initialize parameters and build model.
         Params
         ======
-            state_size (int): Dimension of each state
+            state_size (int): Dimension of flattened state (84*84*4 = 28,224 for grayscale)
             action_size (int): Dimension of each action
-            seed (int): Random seed
-            fc1_units (int): Number of nodes in first hidden layer
-            fc2_units (int): Number of nodes in second hidden layer
+            seed (int): Random seed for reproducibility
+            fc1_units (int): Number of nodes in first hidden layer (default: 64)
+            fc2_units (int): Number of nodes in second hidden layer (default: 32)
         """
         super(QNetwork, self).__init__()
         self.seed = torch.manual_seed(seed)
@@ -211,7 +257,19 @@ class QNetwork(nn.Module):
         self.fc3 = nn.Linear(fc2_units, action_size)
 
     def forward(self, state):
-        """Build a network that maps state -> action values."""
-        x = F.relu(self.fc1(state))
-        x = F.relu(self.fc2(x))
-        return self.fc3(x)
+        """
+        Forward pass through the network.
+        
+        Maps flattened state (28,224 dimensions for grayscale) to Q-values for each action.
+        
+        Params
+        ======
+            state: Flattened grayscale image state tensor [batch_size, 28224]
+            
+        Returns
+        =======
+            action_values: Q-values for each action [batch_size, action_size]
+        """
+        x = F.relu(self.fc1(state))  # [batch_size, 64]
+        x = F.relu(self.fc2(x))       # [batch_size, 32]
+        return self.fc3(x)            # [batch_size, action_size]

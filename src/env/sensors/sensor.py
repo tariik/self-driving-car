@@ -59,6 +59,10 @@ class CarlaSensor(BaseSensor):
         if isinstance(transform, str):
             transform = [float(x) for x in transform.split(",")]
         assert len(transform) == 6
+        
+        # Remove 'size' attribute as it's not a CARLA blueprint attribute
+        # It's only used for observation space definition
+        attributes.pop("size", None)
 
         blueprint = world.get_blueprint_library().find(type_)
         blueprint.set_attribute("role_name", name)

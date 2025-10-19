@@ -23,6 +23,7 @@ from src.env.sensors.sensor_interface import SensorInterface
 
 BASE_CORE_CONFIG = {
     "host": "localhost",  # Client host
+    "port": 2000,  # Port of the CARLA server (if using external server)
     "timeout": 10.0,  # Timeout of the client
     "timestep": 0.05,  # Time step of the simulation
     "retries_on_error": 10,  # Number of tries to connect to the client
@@ -31,7 +32,8 @@ BASE_CORE_CONFIG = {
     "quality_level": "Low",  # Quality level of the simulation. Can be 'Low', 'High', 'Epic'
     "enable_map_assets": False,  # enable / disable all town assets except for the road
     "enable_rendering": True,  # enable / disable camera images
-    "show_display": False  # Whether or not the server will be displayed
+    "show_display": False,  # Whether or not the server will be displayed
+    "use_external_server": True  # Whether to use an external CARLA server or start a new one
 }
 
 
@@ -60,8 +62,13 @@ class CarlaCore:
         self.config = join_dicts(BASE_CORE_CONFIG, config)
         self.sensor_interface = SensorInterface()
 
-        # TODO: self.init_server()
-        # TODO: self.connect_client()
+        # Only start server if not using an external one
+        if not self.config.get("use_external_server", False):
+            self.init_server()
+        else:
+            self.server_port = self.config.get("port", 2000)
+        
+        self.connect_client()
 
     def init_server(self):
         """Start a server on a random port"""
@@ -136,10 +143,19 @@ class CarlaCore:
     def setup_experiment(self, experiment_config):
         """Initialize the hero and sensors"""
 
-        self.world = self.client.load_world(
-            map_name = experiment_config["town"],
-            reset_settings = False,
-            map_layers = carla.MapLayer.All if self.config["enable_map_assets"] else carla.MapLayer.NONE)
+        # Check if we need to load a different map
+        current_map = self.world.get_map().name
+        requested_map = experiment_config["town"]
+        
+        # Only load the world if the map is different
+        if requested_map not in current_map:
+            print(f"Loading map {requested_map}...")
+            self.world = self.client.load_world(
+                map_name = requested_map,
+                reset_settings = False,
+                map_layers = carla.MapLayer.All if self.config["enable_map_assets"] else carla.MapLayer.NONE)
+        else:
+            print(f"Map {requested_map} is already loaded, skipping reload...")
 
         self.map = self.world.get_map()
 
@@ -150,14 +166,28 @@ class CarlaCore:
         self.tm_port = self.server_port // 10 + self.server_port % 10
         while is_used(self.tm_port):
             print("Traffic manager's port " + str(self.tm_port) + " is already being used. Checking the next one")
-            tm_port += 1
+            self.tm_port += 1
         print("Traffic manager connected to port " + str(self.tm_port))
 
-        self.traffic_manager = self.client.get_trafficmanager(self.tm_port)
-        self.traffic_manager.set_hybrid_physics_mode(experiment_config["background_activity"]["tm_hybrid_mode"])
-        seed = experiment_config["background_activity"]["seed"]
-        if seed is not None:
-            self.traffic_manager.set_random_device_seed(seed)
+        try:
+            self.traffic_manager = self.client.get_trafficmanager(self.tm_port)
+            self.traffic_manager.set_hybrid_physics_mode(experiment_config["background_activity"]["tm_hybrid_mode"])
+            seed = experiment_config["background_activity"]["seed"]
+            if seed is not None:
+                self.traffic_manager.set_random_device_seed(seed)
+        except RuntimeError as e:
+            print(f"Warning: Could not create traffic manager on port {self.tm_port}: {e}")
+            print("Attempting to use default traffic manager port 8000...")
+            try:
+                self.traffic_manager = self.client.get_trafficmanager(8000)
+                self.traffic_manager.set_hybrid_physics_mode(experiment_config["background_activity"]["tm_hybrid_mode"])
+                seed = experiment_config["background_activity"]["seed"]
+                if seed is not None:
+                    self.traffic_manager.set_random_device_seed(seed)
+            except Exception as e2:
+                print(f"Warning: Could not connect to traffic manager: {e2}")
+                print("Continuing without traffic manager. Background traffic will not be available.")
+                self.traffic_manager = None
 
         # Spawn the background activity
         self.spawn_npcs(
@@ -208,7 +238,7 @@ class CarlaCore:
             self.hero.destroy()
             self.hero = None
 
-        random.shuffle(spawn_points, random.random)
+        random.shuffle(spawn_points)
         for i in range(0,len(spawn_points)):
             next_spawn_point = spawn_points[i % len(spawn_points)]
             self.hero = self.world.try_spawn_actor(self.hero_blueprints, next_spawn_point)
@@ -236,6 +266,14 @@ class CarlaCore:
     def spawn_npcs(self, n_vehicles, n_walkers):
         """Spawns vehicles and walkers, also setting up the Traffic Manager and its parameters"""
 
+        # Skip spawning NPCs if traffic manager is not available or no NPCs requested
+        if self.traffic_manager is None:
+            print("Traffic manager not available, skipping NPC spawning")
+            return
+            
+        if n_vehicles == 0 and n_walkers == 0:
+            print("No NPCs requested, skipping NPC spawning")
+            return
 
         SpawnActor = carla.command.SpawnActor
         SetAutopilot = carla.command.SetAutopilot

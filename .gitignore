@@ -22,7 +22,7 @@ wheels/
 venv/
 
 .env/
-
+env/
 # Jupyter Notebook
 .ipynb_checkpoints
 */.ipynb_checkpoints/*
